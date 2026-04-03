@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { auth, db, databasePermissionMessage, isDatabasePermissionError } from '../firebase';
 import { signOut } from 'firebase/auth';
-import { get, ref, set, update } from 'firebase/database';
+import { get, onValue, ref, set, update } from 'firebase/database';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LogOut, BookOpen, Sparkles, User, Settings, GraduationCap, X, Plus, Trash2, Key, Users, Map, CheckCircle, Crosshair, Crown, Bell } from 'lucide-react';
 import { findBestMatches, generateRoadmap, generateQuiz, generateTeamBuilder, generateSkillGap } from '../ai';
@@ -46,6 +46,7 @@ export default function Dashboard({ user }) {
   const [isBuildingTeam, setIsBuildingTeam] = useState(false);
   const [isDirectoryOpen, setIsDirectoryOpen] = useState(false);
   const [globalUsers, setGlobalUsers] = useState([]);
+  const [conversations, setConversations] = useState([]);
   const [insightMessage, setInsightMessage] = useState('');
 
   const getSkillPreview = (userRecord) => {
@@ -62,6 +63,23 @@ export default function Dashboard({ user }) {
     fetchProfile();
     fetchGlobalUsers();
   }, [user]);
+
+  useEffect(() => {
+    const conversationsRef = ref(db, `userChats/${user.uid}`);
+    const unsubscribe = onValue(
+      conversationsRef,
+      (snapshot) => {
+        const value = snapshot.val() || {};
+        const items = Object.values(value).sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
+        setConversations(items);
+      },
+      (error) => {
+        console.error(error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user.uid]);
 
   const fetchGlobalUsers = async () => {
     try {
@@ -400,6 +418,68 @@ export default function Dashboard({ user }) {
                       </button>
                     </div>
                   </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="glass-panel" style={{ padding: '2.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div>
+                <h3 className="cinema-title" style={{ fontSize: '1.8rem', marginBottom: '0.35rem' }}>Inbox</h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>Recent conversations with unread counts.</p>
+              </div>
+            </div>
+
+            {conversations.length === 0 ? (
+              <div style={{ padding: '1.5rem', borderRadius: '16px', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}>
+                No conversations yet. Start a message from the directory or AI results to create one.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                {conversations.slice(0, 8).map((conversation) => (
+                  <button
+                    key={conversation.chatId}
+                    type="button"
+                    onClick={() => navigate('/chat?uid=' + conversation.otherUserId)}
+                    style={{
+                      width: '100%',
+                      textAlign: 'left',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: '1rem',
+                      padding: '1rem 1.1rem',
+                      borderRadius: '14px',
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid var(--border-color)',
+                      color: 'white',
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.25rem' }}>
+                        <span className="cinema-title" style={{ fontSize: '1.2rem' }}>{conversation.otherUserName}</span>
+                        {conversation.otherUserIsDemo && (
+                          <span style={{ fontSize: '0.7rem', padding: '3px 8px', borderRadius: '999px', background: 'rgba(245, 158, 11, 0.15)', color: '#fcd34d' }}>
+                            Demo
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {conversation.lastMessage || 'Open chat'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+                      {!!conversation.unreadCount && (
+                        <span style={{ minWidth: '28px', height: '28px', padding: '0 8px', borderRadius: '999px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(14, 165, 233, 0.18)', color: '#bae6fd', fontSize: '0.78rem', fontWeight: 600 }}>
+                          {conversation.unreadCount}
+                        </span>
+                      )}
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                        {conversation.lastTimestamp ? new Date(conversation.lastTimestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}
+                      </span>
+                    </div>
+                  </button>
                 ))}
               </div>
             )}

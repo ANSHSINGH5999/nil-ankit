@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { db, databasePermissionMessage, isDatabasePermissionError } from '../firebase';
-import { get, onValue, push, ref, serverTimestamp, set } from 'firebase/database';
+import { get, increment, onValue, push, ref, serverTimestamp, set, update } from 'firebase/database';
 import { Sparkles, ArrowLeft, Send } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { generateChatReply } from '../ai';
@@ -39,6 +39,45 @@ export default function Chat({ user }) {
 
   const getChatId = (uid1, uid2) => {
     return [uid1, uid2].sort().join('_');
+  };
+
+  const markChatAsRead = async (chatId) => {
+    try {
+      await update(ref(db), {
+        [`userChats/${user.uid}/${chatId}/unreadCount`]: 0,
+        [`userChats/${user.uid}/${chatId}/lastReadAt`]: Date.now(),
+      });
+    } catch (error) {
+      console.error('Failed to mark chat as read:', error);
+    }
+  };
+
+  const writeChatSummaries = async ({
+    chatId,
+    senderId,
+    senderName,
+    recipientId,
+    recipientName,
+    text,
+    recipientIsDemo = false,
+  }) => {
+    const timestamp = Date.now();
+    await update(ref(db), {
+      [`userChats/${senderId}/${chatId}/chatId`]: chatId,
+      [`userChats/${senderId}/${chatId}/otherUserId`]: recipientId,
+      [`userChats/${senderId}/${chatId}/otherUserName`]: recipientName,
+      [`userChats/${senderId}/${chatId}/otherUserIsDemo`]: recipientIsDemo,
+      [`userChats/${senderId}/${chatId}/lastMessage`]: text,
+      [`userChats/${senderId}/${chatId}/lastTimestamp`]: timestamp,
+      [`userChats/${senderId}/${chatId}/unreadCount`]: 0,
+      [`userChats/${recipientId}/${chatId}/chatId`]: chatId,
+      [`userChats/${recipientId}/${chatId}/otherUserId`]: senderId,
+      [`userChats/${recipientId}/${chatId}/otherUserName`]: senderName,
+      [`userChats/${recipientId}/${chatId}/otherUserIsDemo`]: false,
+      [`userChats/${recipientId}/${chatId}/lastMessage`]: text,
+      [`userChats/${recipientId}/${chatId}/lastTimestamp`]: timestamp,
+      [`userChats/${recipientId}/${chatId}/unreadCount`]: increment(1),
+    });
   };
 
   const defaultProfile = {
@@ -104,6 +143,7 @@ export default function Chat({ user }) {
             return aTime - bTime;
           });
         setMessages(msgs);
+        markChatAsRead(chatId);
       },
       (error) => {
         console.error(error);
@@ -140,6 +180,15 @@ export default function Chat({ user }) {
         senderId: user.uid,
         createdAt: serverTimestamp() 
       });
+      await writeChatSummaries({
+        chatId,
+        senderId: user.uid,
+        senderName: userProfile?.displayName || defaultProfile.displayName,
+        recipientId: targetUid,
+        recipientName: targetUser?.displayName || 'Match',
+        text: messageText,
+        recipientIsDemo: isDemoTarget,
+      });
     } catch (error) {
       console.error(error);
       if (isDatabasePermissionError(error)) {
@@ -168,6 +217,15 @@ export default function Chat({ user }) {
                   senderId: targetUid, // Spoofing the other user
                   createdAt: serverTimestamp() 
                 });
+                await writeChatSummaries({
+                  chatId,
+                  senderId: targetUid,
+                  senderName: targetUser?.displayName || 'Demo user',
+                  recipientId: user.uid,
+                  recipientName: userProfile?.displayName || defaultProfile.displayName,
+                  text: aiResponse,
+                });
+                await markChatAsRead(chatId);
             }
         } catch(err) {
             alert("AI Chat Reply Error: " + err.message);
