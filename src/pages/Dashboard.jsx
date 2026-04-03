@@ -9,6 +9,7 @@ import { seedFakeUsers } from '../utils/seedData';
 import { useNavigate } from 'react-router-dom';
 
 export default function Dashboard({ user }) {
+  const ADMIN_PASSWORD = '4Urukpzzpv@1';
   const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [profileWarning, setProfileWarning] = useState('');
@@ -21,6 +22,12 @@ export default function Dashboard({ user }) {
   const [newProficiency, setNewProficiency] = useState('Beginner');
   const [apiKey, setApiKey] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isAdminPromptOpen, setIsAdminPromptOpen] = useState(false);
+  const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminError, setAdminError] = useState('');
+  const [adminData, setAdminData] = useState({ users: [], chats: [] });
+  const [isAdminLoading, setIsAdminLoading] = useState(false);
   
   // AI States
   const [matches, setMatches] = useState(() => {
@@ -119,6 +126,35 @@ export default function Dashboard({ user }) {
 
       return (left.displayName || '').localeCompare(right.displayName || '');
     });
+
+  const getStrongestMatchingSkill = (record) => {
+    const wantedSkills = new Set(getWantedSkillNames());
+    const offeredSkills = record?.skillsOffered || [];
+    const matchedSkills = offeredSkills
+      .map((skill) => ({
+        name: (typeof skill === 'string' ? skill : skill?.name || '').trim(),
+        proficiency: (typeof skill === 'string' ? 'Beginner' : skill?.proficiency || 'Beginner').trim(),
+      }))
+      .filter((skill) => wantedSkills.has(skill.name.toLowerCase()));
+
+    if (matchedSkills.length === 0) {
+      return null;
+    }
+
+    matchedSkills.sort((left, right) => {
+      const leftWeight = proficiencyWeight[left.proficiency.toLowerCase()] || 1;
+      const rightWeight = proficiencyWeight[right.proficiency.toLowerCase()] || 1;
+      return rightWeight - leftWeight;
+    });
+
+    return matchedSkills[0];
+  };
+
+  const isExactSingleSkillMatch = (record) => {
+    const wantedSkills = getWantedSkillNames();
+    const sharedSkills = getSharedWantedSkills(record);
+    return wantedSkills.length === 1 && sharedSkills.length === 1 && sharedSkills[0] === wantedSkills[0];
+  };
 
   const getSkillPreview = (userRecord) => {
     const offered = userRecord?.skillsOffered?.slice(0, 2)?.map((skill) => skill.name || skill) || [];
@@ -380,6 +416,71 @@ export default function Dashboard({ user }) {
 
   const handleNotifClick = () => { alert("Smart Notifications are active! No new alerts right now."); };
 
+  const loadAdminData = async () => {
+    setIsAdminLoading(true);
+    try {
+      const [usersSnapshot, chatsSnapshot, presenceSnapshot] = await Promise.all([
+        get(ref(db, 'users')),
+        get(ref(db, 'chats')),
+        get(ref(db, 'presence')),
+      ]);
+
+      const usersValue = usersSnapshot.exists() ? usersSnapshot.val() : {};
+      const chatsValue = chatsSnapshot.exists() ? chatsSnapshot.val() : {};
+      const presenceValue = presenceSnapshot.exists() ? presenceSnapshot.val() : {};
+
+      const users = Object.entries(usersValue).map(([uid, record]) => ({
+        uid,
+        ...record,
+        presence: presenceValue?.[uid]?.state || 'offline',
+      }));
+
+      const chats = Object.entries(chatsValue).map(([chatId, chatRecord]) => {
+        const messages = Object.values(chatRecord?.messages || {}).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        const participants = chatId.split('_');
+        return {
+          chatId,
+          participants,
+          messageCount: messages.length,
+          lastMessage: messages[messages.length - 1]?.text || '',
+        };
+      }).sort((a, b) => b.messageCount - a.messageCount);
+
+      setAdminData({ users, chats });
+    } catch (error) {
+      console.error(error);
+      setAdminError('Failed to load admin data.');
+    } finally {
+      setIsAdminLoading(false);
+    }
+  };
+
+  const openAdminPanel = async () => {
+    if (adminPassword !== ADMIN_PASSWORD) {
+      setAdminError('Incorrect admin password.');
+      return;
+    }
+
+    setAdminError('');
+    setAdminPassword('');
+    setIsAdminPromptOpen(false);
+    setIsAdminPanelOpen(true);
+    await loadAdminData();
+  };
+
+  const handleAdminSeed = async () => {
+    setIsAdminLoading(true);
+    try {
+      await seedFakeUsers();
+      await loadAdminData();
+      await fetchGlobalUsers();
+    } catch (error) {
+      console.error(error);
+      setAdminError('Failed to seed demo users.');
+      setIsAdminLoading(false);
+    }
+  };
+
   return (
     <div style={{ minHeight: '100vh', padding: '2rem' }}>
       <nav className="glass-panel animate-fade-rise" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.5rem 2.5rem', marginBottom: '2.5rem' }}>
@@ -389,6 +490,9 @@ export default function Dashboard({ user }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           <span style={{ color: 'var(--text-muted)' }}>Hello, {profile?.displayName}</span>
+          <button onClick={() => { setAdminError(''); setIsAdminPromptOpen(true); }} className="btn-secondary" style={{ padding: '10px 18px' }} title="Admin Access">
+            Admin
+          </button>
           <button onClick={handleNotifClick} className="btn-secondary" style={{ padding: '10px' }} title="Notifications"><Bell size={18} /></button>
           <button onClick={() => signOut(auth)} className="btn-secondary" style={{ padding: '10px 18px' }} title="Log out"><LogOut size={18} /></button>
         </div>
@@ -514,11 +618,23 @@ export default function Dashboard({ user }) {
                 {globalUsers.filter(isEligibleContact).slice(0, 6).map((person) => (
                   <div key={person.uid} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     <div>
-                      <div className="cinema-title" style={{ fontSize: '1.3rem', color: 'white' }}>{person.displayName}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <div className="cinema-title" style={{ fontSize: '1.3rem', color: 'white' }}>{person.displayName}</div>
+                        {isExactSingleSkillMatch(person) && (
+                          <span style={{ fontSize: '0.68rem', padding: '3px 8px', borderRadius: '999px', background: 'rgba(14, 165, 233, 0.16)', color: '#bae6fd' }}>
+                            Exact match
+                          </span>
+                        )}
+                      </div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{getSkillPreview(person)}</div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--accent-secondary)', marginTop: '0.35rem' }}>
                         Matches: {getSharedWantedSkills(person).join(', ')}
                       </div>
+                      {getStrongestMatchingSkill(person) && (
+                        <div style={{ fontSize: '0.75rem', color: '#fcd34d', marginTop: '0.25rem' }}>
+                          Strongest match: {getStrongestMatchingSkill(person).name} ({getStrongestMatchingSkill(person).proficiency})
+                        </div>
+                      )}
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
                         Rank score: {getMatchScore(person).matchedSkillCount} skill match, proficiency {getMatchScore(person).proficiencyScore}
                       </div>
@@ -681,12 +797,24 @@ export default function Dashboard({ user }) {
                     <motion.div initial={{opacity: 0, y: 10}} animate={{opacity: 1, y: 0}} transition={{delay: idx*0.1}} key={m.uid} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '1.5rem' }}>
                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
                          <div>
-                            <h4 className="cinema-title" style={{ fontSize: '1.6rem', color: 'white', marginBottom: '4px' }}>{m.displayName}</h4>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '4px' }}>
+                              <h4 className="cinema-title" style={{ fontSize: '1.6rem', color: 'white', marginBottom: 0 }}>{m.displayName}</h4>
+                              {isExactSingleSkillMatch(m) && (
+                                <span style={{ fontSize: '0.68rem', padding: '3px 8px', borderRadius: '999px', background: 'rgba(14, 165, 233, 0.16)', color: '#bae6fd' }}>
+                                  Exact match
+                                </span>
+                              )}
+                            </div>
                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                <span style={{ fontSize: '0.8rem', padding: '2px 8px', background: 'rgba(139,92,246,0.2)', color: 'white', borderRadius: '12px' }}>{m.score}% Match</span>
                                <span style={{ fontSize: '0.8rem', padding: '2px 8px', background: 'rgba(234,179,8,0.15)', color: '#facc15', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '4px', border: '1px solid rgba(234,179,8,0.3)' }}>👑 {m.reputation || (Math.floor(m.uid.charCodeAt(m.uid.length-1)*3.7)+300)} Verified Rep</span>
                                {m.mutual && <span style={{ fontSize: '0.8rem', padding: '2px 8px', background: 'rgba(34,197,94,0.2)', color: 'white', borderRadius: '12px' }}>Mutual</span>}
                             </div>
+                            {getStrongestMatchingSkill(m) && (
+                              <div style={{ fontSize: '0.8rem', color: '#fcd34d', marginTop: '0.5rem' }}>
+                                Strongest skill: {getStrongestMatchingSkill(m).name} ({getStrongestMatchingSkill(m).proficiency})
+                              </div>
+                            )}
                          </div>
                        </div>
                        <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', lineHeight: '1.6', background: 'rgba(0,0,0,0.2)', padding: '1rem', borderLeft: '2px solid var(--border-color)' }}>"{m.reasoning}"</p>
@@ -723,10 +851,22 @@ export default function Dashboard({ user }) {
               <div className="custom-scroll" style={{ flex: 1, overflowY: 'auto', paddingRight: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1.5rem' }}>
                 {globalUsers.filter(isEligibleContact).map(u => (
                    <div key={u.uid} style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)', padding: '1.5rem', borderRadius: '12px', display: 'flex', flexDirection: 'column' }}>
-                      <h4 className="cinema-title" style={{ fontSize: '1.3rem', marginBottom: '0.4rem', color: 'white' }}>{u.displayName}</h4>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
+                        <h4 className="cinema-title" style={{ fontSize: '1.3rem', color: 'white' }}>{u.displayName}</h4>
+                        {isExactSingleSkillMatch(u) && (
+                          <span style={{ fontSize: '0.68rem', padding: '3px 8px', borderRadius: '999px', background: 'rgba(14, 165, 233, 0.16)', color: '#bae6fd' }}>
+                            Exact match
+                          </span>
+                        )}
+                      </div>
                       <span style={{ fontSize: '0.7rem', padding: '2px 8px', background: 'rgba(234,179,8,0.15)', color: '#facc15', borderRadius: '10px', display: 'inline-block', border: '1px solid rgba(234,179,8,0.3)', marginBottom: '1rem', width: 'fit-content' }}>👑 {u.reputation || (Math.floor(u.uid.charCodeAt(u.uid.length-1)*3.7)+300)} Verified</span>
                       <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 1rem 0' }}>Offers: <span style={{color: 'var(--text-main)'}}>{u.skillsOffered?.slice(0,2).map(s=>s.name).join(', ') || 'N/A'}</span></p>
                       <p style={{ fontSize: '0.8rem', color: 'var(--accent-secondary)', margin: '0 0 1rem 0' }}>Matches: {getSharedWantedSkills(u).join(', ')}</p>
+                      {getStrongestMatchingSkill(u) && (
+                        <p style={{ fontSize: '0.8rem', color: '#fcd34d', margin: '0 0 1rem 0' }}>
+                          Strongest skill: {getStrongestMatchingSkill(u).name} ({getStrongestMatchingSkill(u).proficiency})
+                        </p>
+                      )}
                       <button className="liquid-glass" style={{ width: '100%', fontSize: '0.8rem', padding: '8px', marginTop: 'auto' }} onClick={() => { setIsDirectoryOpen(false); navigate('/chat?uid=' + u.uid); }}>Direct Message</button>
                    </div>
                 ))}
@@ -839,6 +979,107 @@ export default function Dashboard({ user }) {
                        </div>
                     );
                   })}
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isAdminPromptOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 90, padding: '1rem' }}>
+            <motion.div initial={{ scale: 0.95, opacity: 0, y: 12 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 12 }} className="glass-panel" style={{ width: '100%', maxWidth: '420px', padding: '2rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                <h2 className="cinema-title" style={{ fontSize: '2rem' }}>Admin Access</h2>
+                <button onClick={() => setIsAdminPromptOpen(false)} style={{ background: 'transparent', color: 'var(--text-muted)' }}><X size={22} /></button>
+              </div>
+              <p style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>Enter the admin password to open full database access tools.</p>
+              <input
+                type="password"
+                value={adminPassword}
+                onChange={(event) => setAdminPassword(event.target.value)}
+                placeholder="Admin password"
+                style={{ marginBottom: '1rem' }}
+              />
+              {adminError && (
+                <div style={{ marginBottom: '1rem', color: '#fecaca', background: 'rgba(239, 68, 68, 0.14)', border: '1px solid rgba(239, 68, 68, 0.32)', borderRadius: '10px', padding: '0.85rem 1rem', fontSize: '0.9rem' }}>
+                  {adminError}
+                </div>
+              )}
+              <button className="liquid-glass" style={{ width: '100%' }} onClick={openAdminPanel}>
+                Unlock Admin
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isAdminPanelOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.86)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 95, padding: '1.5rem' }}>
+            <motion.div initial={{ scale: 0.96, opacity: 0, y: 18 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.96, opacity: 0, y: 18 }} className="glass-panel" style={{ width: '100%', maxWidth: '1100px', maxHeight: '88vh', overflow: 'auto', padding: '2rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+                <div>
+                  <h2 className="cinema-title" style={{ fontSize: '2.2rem' }}>Admin Console</h2>
+                  <p style={{ color: 'var(--text-muted)', marginTop: '0.3rem' }}>Full access view for users, chats, and demo data.</p>
+                </div>
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                  <button className="btn-secondary" onClick={loadAdminData}>Refresh</button>
+                  <button className="btn-secondary" onClick={handleAdminSeed}>Seed Demo Users</button>
+                  <button onClick={() => setIsAdminPanelOpen(false)} style={{ background: 'transparent', color: 'var(--text-muted)' }}><X size={24} /></button>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+                <div className="glass-panel" style={{ padding: '1rem' }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Users</div>
+                  <div className="cinema-title" style={{ fontSize: '2rem' }}>{adminData.users.length}</div>
+                </div>
+                <div className="glass-panel" style={{ padding: '1rem' }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Live Chats</div>
+                  <div className="cinema-title" style={{ fontSize: '2rem' }}>{adminData.chats.length}</div>
+                </div>
+                <div className="glass-panel" style={{ padding: '1rem' }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Online Now</div>
+                  <div className="cinema-title" style={{ fontSize: '2rem' }}>{adminData.users.filter((entry) => entry.presence === 'online').length}</div>
+                </div>
+              </div>
+
+              {isAdminLoading && (
+                <div style={{ marginBottom: '1rem', color: 'var(--text-muted)' }}>Loading admin data...</div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1.5rem' }}>
+                <div className="glass-panel" style={{ padding: '1rem' }}>
+                  <h3 className="cinema-title" style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Users</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '55vh', overflow: 'auto' }}>
+                    {adminData.users.map((entry) => (
+                      <div key={entry.uid} style={{ padding: '0.9rem 1rem', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.35rem' }}>
+                          <div className="cinema-title" style={{ fontSize: '1.15rem' }}>{entry.displayName || entry.email || entry.uid}</div>
+                          <span style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: '999px', background: entry.presence === 'online' ? 'rgba(34, 197, 94, 0.14)' : 'rgba(255,255,255,0.06)', color: entry.presence === 'online' ? '#bbf7d0' : 'var(--text-muted)' }}>
+                            {entry.presence}
+                          </span>
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: '0.35rem' }}>{entry.email || 'No email'}</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>UID: {entry.uid}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="glass-panel" style={{ padding: '1rem' }}>
+                  <h3 className="cinema-title" style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Chats</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '55vh', overflow: 'auto' }}>
+                    {adminData.chats.map((chat) => (
+                      <div key={chat.chatId} style={{ padding: '0.9rem 1rem', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)' }}>
+                        <div className="cinema-title" style={{ fontSize: '1.05rem', marginBottom: '0.35rem' }}>{chat.participants.join(' + ')}</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: '0.35rem' }}>Messages: {chat.messageCount}</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', lineHeight: '1.45' }}>{chat.lastMessage || 'No messages yet'}</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </motion.div>
