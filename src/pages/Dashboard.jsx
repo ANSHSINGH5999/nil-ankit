@@ -48,6 +48,14 @@ export default function Dashboard({ user }) {
   const [globalUsers, setGlobalUsers] = useState([]);
   const [insightMessage, setInsightMessage] = useState('');
 
+  const getSkillPreview = (userRecord) => {
+    const offered = userRecord?.skillsOffered?.slice(0, 2)?.map((skill) => skill.name || skill) || [];
+    if (offered.length === 0) {
+      return 'Open to connect';
+    }
+    return offered.join(', ');
+  };
+
   const reputationScore = profile?.reputation || 0; 
 
   useEffect(() => {
@@ -356,6 +364,45 @@ export default function Dashboard({ user }) {
                  <p style={{ fontSize: '0.9rem', color: 'var(--accent-primary)' }}>Next Move: {gapAnalysis.nextStep}</p>
                </motion.div>
              )}
+          </div>
+
+          <div className="glass-panel" style={{ padding: '2.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div>
+                <h3 className="cinema-title" style={{ fontSize: '1.8rem', marginBottom: '0.35rem' }}>Realtime Messages</h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>Message any available learner or mentor directly. Chats update live for real users.</p>
+              </div>
+              {globalUsers.length > 0 && (
+                <button className="btn-secondary" onClick={() => setIsDirectoryOpen(true)}>
+                  View All
+                </button>
+              )}
+            </div>
+
+            {globalUsers.length === 0 ? (
+              <div style={{ padding: '1.5rem', borderRadius: '16px', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}>
+                No other profiles are available yet. Once users join, you can open realtime chats from here.
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+                {globalUsers.slice(0, 6).map((person) => (
+                  <div key={person.uid} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <div>
+                      <div className="cinema-title" style={{ fontSize: '1.3rem', color: 'white' }}>{person.displayName}</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{getSkillPreview(person)}</div>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
+                      <span style={{ fontSize: '0.72rem', padding: '4px 8px', borderRadius: '999px', background: person.isFake ? 'rgba(245, 158, 11, 0.15)' : 'rgba(34, 197, 94, 0.14)', color: person.isFake ? '#fcd34d' : '#bbf7d0', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        {person.isFake ? 'Demo user' : 'Live user'}
+                      </span>
+                      <button className="liquid-glass" style={{ padding: '8px 14px', fontSize: '0.8rem' }} onClick={() => navigate('/chat?uid=' + person.uid)}>
+                        Message
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* AI SYNTHESIS - THE NEW TAB CONTROL */}

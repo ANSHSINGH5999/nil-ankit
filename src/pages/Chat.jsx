@@ -20,10 +20,19 @@ export default function Chat({ user }) {
 
   const [userProfile, setUserProfile] = useState(null);
   const [hasSetIntro, setHasSetIntro] = useState(false);
+  const isDemoTarget = Boolean(targetUser?.isFake || targetUid?.startsWith('fake_'));
+
+  const buildIntroMessage = () => {
+    const myName = userProfile?.displayName || 'a Skill Sync member';
+    const targetName = targetUser?.displayName || 'there';
+    const wanted = userProfile?.skillsWanted?.[0]?.name || 'new skills';
+    const offered = userProfile?.skillsOffered?.[0]?.name || 'what I can teach';
+    return `Hi ${targetName}, I'm ${myName}. I'm currently trying to improve ${wanted}, and I can help with ${offered}. Want to connect for a quick skill exchange?`;
+  };
 
   useEffect(() => {
     if (targetUser && userProfile && messages.length === 0 && !hasSetIntro) {
-      setNewMessage(`Hey ${targetUser.displayName}, I'm ${userProfile.displayName || 'a new user'}! I noticed our profiles matched and I'd love to exchange skills. Are you free to connect?`);
+      setNewMessage(buildIntroMessage());
       setHasSetIntro(true);
     }
   }, [targetUser, userProfile, messages.length, hasSetIntro]);
@@ -144,7 +153,7 @@ export default function Chat({ user }) {
     }
     
     // 2. Trigger AI Reply instantly (for presentation purposes)
-    if (targetUser) {
+    if (targetUser && isDemoTarget) {
         // Construct basic history
         const h = [...messages.slice(-5), {senderId: user.uid, text: messageText}].map(m => ({
            sender: m.senderId === user.uid ? 'User' : targetUser.displayName,
@@ -182,7 +191,9 @@ export default function Chat({ user }) {
             </div>
             <div>
               <h2 className="cinema-title" style={{ fontSize: '1.6rem', margin: '0 0 2px 0', color: 'white' }}>{targetUser.displayName}</h2>
-              <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>Connected via AI Synthesis</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>
+                {isDemoTarget ? 'Demo profile with instant AI replies' : 'Realtime direct messaging'}
+              </span>
             </div>
           </div>
         </div>
@@ -201,7 +212,9 @@ export default function Chat({ user }) {
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '2rem' }}>
                 <Sparkles size={30} style={{ marginBottom: '1rem', opacity: 0.5 }} />
                 <p style={{ fontSize: '1.1rem', fontFamily: 'var(--font-display)' }}>This is the beginning of your conversation with {targetUser.displayName}.</p>
-                <p style={{ fontSize: '0.85rem' }}>Say hi and start exchanging skills!</p>
+                <p style={{ fontSize: '0.85rem' }}>
+                  {isDemoTarget ? 'Send a message to see the demo user reply instantly.' : 'Messages update in realtime for both users.'}
+                </p>
               </div>
             )}
 
@@ -231,7 +244,7 @@ export default function Chat({ user }) {
           <form onSubmit={sendMessage} style={{ padding: '1.5rem', borderTop: '1px solid var(--border-color)', background: 'rgba(0,0,0,0.2)', display: 'flex', gap: '10px' }}>
             <input 
               type="text" 
-              placeholder={chatDisabled ? 'Chat is unavailable until Realtime Database access is fixed.' : 'Start typing...'} 
+              placeholder={chatDisabled ? 'Chat is unavailable until Realtime Database access is fixed.' : isDemoTarget ? 'Ask about skills, projects, or availability...' : 'Send a realtime message...'} 
               value={newMessage} 
               onChange={(e) => setNewMessage(e.target.value)} 
               disabled={chatDisabled}
