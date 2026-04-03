@@ -50,6 +50,25 @@ export default function Dashboard({ user }) {
   const [presenceMap, setPresenceMap] = useState({});
   const [insightMessage, setInsightMessage] = useState('');
 
+  const getWantedSkillNames = (record = profile) =>
+    (record?.skillsWanted || [])
+      .map((skill) => (typeof skill === 'string' ? skill : skill?.name || ''))
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean);
+
+  const getOfferedSkillNames = (record) =>
+    (record?.skillsOffered || [])
+      .map((skill) => (typeof skill === 'string' ? skill : skill?.name || ''))
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean);
+
+  const getSharedWantedSkills = (record) => {
+    const wantedSkills = new Set(getWantedSkillNames());
+    return getOfferedSkillNames(record).filter((name) => wantedSkills.has(name));
+  };
+
+  const isEligibleContact = (record) => getSharedWantedSkills(record).length > 0;
+
   const getSkillPreview = (userRecord) => {
     const offered = userRecord?.skillsOffered?.slice(0, 2)?.map((skill) => skill.name || skill) || [];
     if (offered.length === 0) {
@@ -183,6 +202,12 @@ export default function Dashboard({ user }) {
     setInsightMessage('');
     setIsMatching(true);
     try {
+      if (getWantedSkillNames().length === 0) {
+        setMatches([]);
+        setInsightMessage('Add at least one skill in "I want to learn" to unlock matched messaging.');
+        return;
+      }
+
       const snapshot = await get(ref(db, 'users'));
       const allUsers = snapshot.exists() ? snapshot.val() : {};
       let allOtherUsers = Object.entries(allUsers)
@@ -198,8 +223,11 @@ export default function Dashboard({ user }) {
           .map(([uid, data]) => ({ uid, ...data }));
       }
 
+      allOtherUsers = allOtherUsers.filter(isEligibleContact);
+
       if(allOtherUsers.length === 0) {
-        setInsightMessage('No student profiles are available yet. Add more users or seed demo users first.');
+        setMatches([]);
+        setInsightMessage('No matched users found yet. Add more skills you want to learn or wait for users who offer them.');
         return;
       }
       
@@ -218,6 +246,12 @@ export default function Dashboard({ user }) {
     setInsightMessage('');
     setIsBuildingTeam(true);
     try {
+      if (getWantedSkillNames().length === 0) {
+        setAiTeam(null);
+        setInsightMessage('Add at least one skill in "I want to learn" to assemble a relevant triad.');
+        return;
+      }
+
       const snapshot = await get(ref(db, 'users'));
       const allUsers = snapshot.exists() ? snapshot.val() : {};
       let allOtherUsers = Object.entries(allUsers)
@@ -233,8 +267,11 @@ export default function Dashboard({ user }) {
           .map(([uid, data]) => ({ uid, ...data }));
       }
 
+      allOtherUsers = allOtherUsers.filter(isEligibleContact);
+
       if(allOtherUsers.length < 2) {
-        setInsightMessage('At least two other student profiles are needed to assemble a triad.');
+        setAiTeam(null);
+        setInsightMessage('At least two matched users are needed to assemble a triad.');
         return;
       }
       
@@ -404,7 +441,7 @@ export default function Dashboard({ user }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
               <div>
                 <h3 className="cinema-title" style={{ fontSize: '1.8rem', marginBottom: '0.35rem' }}>Realtime Messages</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>Message any available learner or mentor directly. Chats update live for real users.</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>Only users who teach the skills you want to learn can be messaged directly.</p>
               </div>
               {globalUsers.length > 0 && (
                 <button className="btn-secondary" onClick={() => setIsDirectoryOpen(true)}>
@@ -413,17 +450,24 @@ export default function Dashboard({ user }) {
               )}
             </div>
 
-            {globalUsers.length === 0 ? (
+            {getWantedSkillNames().length === 0 ? (
               <div style={{ padding: '1.5rem', borderRadius: '16px', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}>
-                No other profiles are available yet. Once users join, you can open realtime chats from here.
+                Add skills under "I want to learn" to unlock matched messaging.
+              </div>
+            ) : globalUsers.filter(isEligibleContact).length === 0 ? (
+              <div style={{ padding: '1.5rem', borderRadius: '16px', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}>
+                No matched mentors found yet for your current learning goals.
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-                {globalUsers.slice(0, 6).map((person) => (
+                {globalUsers.filter(isEligibleContact).slice(0, 6).map((person) => (
                   <div key={person.uid} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     <div>
                       <div className="cinema-title" style={{ fontSize: '1.3rem', color: 'white' }}>{person.displayName}</div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{getSkillPreview(person)}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--accent-secondary)', marginTop: '0.35rem' }}>
+                        Matches: {getSharedWantedSkills(person).join(', ')}
+                      </div>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
                       <span style={{ fontSize: '0.72rem', padding: '4px 8px', borderRadius: '999px', background: person.isFake ? 'rgba(245, 158, 11, 0.15)' : 'rgba(34, 197, 94, 0.14)', color: person.isFake ? '#fcd34d' : '#bbf7d0', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -623,11 +667,12 @@ export default function Dashboard({ user }) {
                 <button onClick={() => setIsDirectoryOpen(false)} style={{ background: 'transparent', color: 'var(--text-muted)' }}><X size={24} /></button>
               </div>
               <div className="custom-scroll" style={{ flex: 1, overflowY: 'auto', paddingRight: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1.5rem' }}>
-                {globalUsers.map(u => (
+                {globalUsers.filter(isEligibleContact).map(u => (
                    <div key={u.uid} style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)', padding: '1.5rem', borderRadius: '12px', display: 'flex', flexDirection: 'column' }}>
                       <h4 className="cinema-title" style={{ fontSize: '1.3rem', marginBottom: '0.4rem', color: 'white' }}>{u.displayName}</h4>
                       <span style={{ fontSize: '0.7rem', padding: '2px 8px', background: 'rgba(234,179,8,0.15)', color: '#facc15', borderRadius: '10px', display: 'inline-block', border: '1px solid rgba(234,179,8,0.3)', marginBottom: '1rem', width: 'fit-content' }}>👑 {u.reputation || (Math.floor(u.uid.charCodeAt(u.uid.length-1)*3.7)+300)} Verified</span>
                       <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 1rem 0' }}>Offers: <span style={{color: 'var(--text-main)'}}>{u.skillsOffered?.slice(0,2).map(s=>s.name).join(', ') || 'N/A'}</span></p>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--accent-secondary)', margin: '0 0 1rem 0' }}>Matches: {getSharedWantedSkills(u).join(', ')}</p>
                       <button className="liquid-glass" style={{ width: '100%', fontSize: '0.8rem', padding: '8px', marginTop: 'auto' }} onClick={() => { setIsDirectoryOpen(false); navigate('/chat?uid=' + u.uid); }}>Direct Message</button>
                    </div>
                 ))}

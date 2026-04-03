@@ -32,6 +32,26 @@ export default function Chat({ user }) {
     return `Hi ${targetName}, I'm ${myName}. I'm currently trying to improve ${wanted}, and I can help with ${offered}. Want to connect for a quick skill exchange?`;
   };
 
+  const getWantedSkillNames = (record = userProfile) =>
+    (record?.skillsWanted || [])
+      .map((skill) => (typeof skill === 'string' ? skill : skill?.name || ''))
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean);
+
+  const getOfferedSkillNames = (record) =>
+    (record?.skillsOffered || [])
+      .map((skill) => (typeof skill === 'string' ? skill : skill?.name || ''))
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean);
+
+  const hasEligibleSkillMatch = (targetRecord, currentProfile) => {
+    const wantedSkills = new Set(getWantedSkillNames(currentProfile));
+    if (wantedSkills.size === 0) {
+      return false;
+    }
+    return getOfferedSkillNames(targetRecord).some((skill) => wantedSkills.has(skill));
+  };
+
   useEffect(() => {
     if (targetUser && userProfile && messages.length === 0 && !hasSetIntro) {
       setNewMessage(buildIntroMessage());
@@ -96,7 +116,12 @@ export default function Chat({ user }) {
       .then((snap) => {
         if (!isMounted) return;
         if (snap.exists()) {
-          setTargetUser(snap.val());
+          const targetRecord = snap.val();
+          if (!targetRecord?.isFake && userProfile && !hasEligibleSkillMatch(targetRecord, userProfile)) {
+            setChatError('You can only message users who offer skills from your learning list.');
+            setChatDisabled(true);
+          }
+          setTargetUser(targetRecord);
         }
       })
       .catch((error) => {
@@ -161,7 +186,7 @@ export default function Chat({ user }) {
       isMounted = false;
       unsubscribe();
     };
-  }, [targetUid, user.uid, navigate]);
+  }, [targetUid, user.uid, navigate, userProfile]);
 
   useEffect(() => {
     if (!targetUid) {
