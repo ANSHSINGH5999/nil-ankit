@@ -63,6 +63,14 @@ export default function Chat({ user }) {
     return [uid1, uid2].sort().join('_');
   };
 
+  const formatMessageTime = (timestamp) => {
+    if (!timestamp) {
+      return '';
+    }
+
+    return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  };
+
   const markChatAsRead = async (chatId) => {
     try {
       await update(ref(db), {
@@ -380,6 +388,9 @@ export default function Chat({ user }) {
                     lineHeight: '1.4'
                   }}>
                     {msg.text}
+                  </div>
+                  <div style={{ marginTop: '0.35rem', fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: isMe ? 'right' : 'left' }}>
+                    {formatMessageTime(msg.createdAt)}
                   </div>
                 </motion.div>
               );

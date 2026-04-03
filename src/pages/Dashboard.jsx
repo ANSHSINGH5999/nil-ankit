@@ -3,7 +3,7 @@ import { auth, db, databasePermissionMessage, isDatabasePermissionError } from '
 import { signOut } from 'firebase/auth';
 import { get, onValue, ref, set, update } from 'firebase/database';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LogOut, BookOpen, Sparkles, User, Settings, GraduationCap, X, Plus, Trash2, Key, Users, Map, CheckCircle, Crosshair, Crown, Bell } from 'lucide-react';
+import { LogOut, BookOpen, Sparkles, User, Settings, GraduationCap, X, Plus, Trash2, Key, Users, Map, CheckCircle, Crosshair, Crown, Bell, Search, MessageSquare } from 'lucide-react';
 import { findBestMatches, generateRoadmap, generateQuiz, generateTeamBuilder, generateSkillGap } from '../ai';
 import { seedFakeUsers } from '../utils/seedData';
 import { useNavigate } from 'react-router-dom';
@@ -28,6 +28,8 @@ export default function Dashboard({ user }) {
   const [adminError, setAdminError] = useState('');
   const [adminData, setAdminData] = useState({ users: [], chats: [] });
   const [isAdminLoading, setIsAdminLoading] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   
   // AI States
   const [matches, setMatches] = useState(() => {
@@ -165,6 +167,34 @@ export default function Dashboard({ user }) {
   };
 
   const reputationScore = profile?.reputation || 0; 
+  const searchableMentors = sortContactsByRelevance(globalUsers.filter(isEligibleContact));
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const filteredMentors = normalizedSearchQuery
+    ? searchableMentors.filter((person) => {
+        const haystack = [
+          person.displayName,
+          person.email,
+          getSkillPreview(person),
+          getSharedWantedSkills(person).join(' '),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(normalizedSearchQuery);
+      })
+    : searchableMentors.slice(0, 8);
+  const filteredConversations = normalizedSearchQuery
+    ? conversations.filter((conversation) =>
+        [conversation.otherUserName, conversation.lastMessage]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .includes(normalizedSearchQuery)
+      )
+    : conversations.slice(0, 6);
+
+  const formatTime = (value) =>
+    value ? new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
 
   useEffect(() => {
     fetchProfile();
@@ -490,6 +520,9 @@ export default function Dashboard({ user }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           <span style={{ color: 'var(--text-muted)' }}>Hello, {profile?.displayName}</span>
+          <button onClick={() => { setSearchQuery(''); setIsSearchOpen(true); }} className="btn-secondary" style={{ padding: '10px 18px' }} title="Search mentors and chats">
+            <Search size={16} /> Search
+          </button>
           <button onClick={() => { setAdminError(''); setIsAdminPromptOpen(true); }} className="btn-secondary" style={{ padding: '10px 18px' }} title="Admin Access">
             Admin
           </button>
@@ -615,7 +648,7 @@ export default function Dashboard({ user }) {
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-                {globalUsers.filter(isEligibleContact).slice(0, 6).map((person) => (
+                {searchableMentors.slice(0, 6).map((person) => (
                   <div key={person.uid} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -849,7 +882,7 @@ export default function Dashboard({ user }) {
                 <button onClick={() => setIsDirectoryOpen(false)} style={{ background: 'transparent', color: 'var(--text-muted)' }}><X size={24} /></button>
               </div>
               <div className="custom-scroll" style={{ flex: 1, overflowY: 'auto', paddingRight: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1.5rem' }}>
-                {globalUsers.filter(isEligibleContact).map(u => (
+                {searchableMentors.map(u => (
                    <div key={u.uid} style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)', padding: '1.5rem', borderRadius: '12px', display: 'flex', flexDirection: 'column' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
                         <h4 className="cinema-title" style={{ fontSize: '1.3rem', color: 'white' }}>{u.displayName}</h4>
@@ -979,6 +1012,85 @@ export default function Dashboard({ user }) {
                        </div>
                     );
                   })}
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isSearchOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.84)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 85, padding: '1rem' }}>
+            <motion.div initial={{ scale: 0.97, opacity: 0, y: 12 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.97, opacity: 0, y: 12 }} className="glass-panel" style={{ width: '100%', maxWidth: '820px', maxHeight: '85vh', overflow: 'auto', padding: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+                <div>
+                  <h2 className="cinema-title" style={{ fontSize: '2rem' }}>Search Messages</h2>
+                  <p style={{ color: 'var(--text-muted)', marginTop: '0.25rem' }}>Find matched mentors or jump into an existing conversation.</p>
+                </div>
+                <button onClick={() => setIsSearchOpen(false)} style={{ background: 'transparent', color: 'var(--text-muted)' }}><X size={24} /></button>
+              </div>
+
+              <div style={{ position: 'relative', marginBottom: '1.25rem' }}>
+                <Search size={16} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search by name, skill, or recent message..."
+                  style={{ paddingLeft: '42px' }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.85rem' }}>
+                    <Users size={18} color="var(--text-muted)" />
+                    <h3 className="cinema-title" style={{ fontSize: '1.4rem' }}>Matched Mentors</h3>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    {filteredMentors.length === 0 ? (
+                      <div style={{ padding: '1rem', borderRadius: '12px', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}>
+                        No matched mentors found.
+                      </div>
+                    ) : (
+                      filteredMentors.map((person) => (
+                        <button key={person.uid} type="button" onClick={() => { setIsSearchOpen(false); navigate('/chat?uid=' + person.uid); }} style={{ textAlign: 'left', padding: '1rem', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', color: 'white' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.35rem' }}>
+                            <span className="cinema-title" style={{ fontSize: '1.2rem' }}>{person.displayName}</span>
+                            <span style={{ fontSize: '0.72rem', color: 'var(--accent-secondary)' }}>{getSharedWantedSkills(person).join(', ')}</span>
+                          </div>
+                          <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>{getSkillPreview(person)}</div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.85rem' }}>
+                    <MessageSquare size={18} color="var(--text-muted)" />
+                    <h3 className="cinema-title" style={{ fontSize: '1.4rem' }}>Recent Chats</h3>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    {filteredConversations.length === 0 ? (
+                      <div style={{ padding: '1rem', borderRadius: '12px', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}>
+                        No conversations found.
+                      </div>
+                    ) : (
+                      filteredConversations.map((conversation) => (
+                        <button key={conversation.chatId} type="button" onClick={() => { setIsSearchOpen(false); navigate('/chat?uid=' + conversation.otherUserId); }} style={{ textAlign: 'left', padding: '1rem', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', color: 'white' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.35rem' }}>
+                            <span className="cinema-title" style={{ fontSize: '1.2rem' }}>{conversation.otherUserName}</span>
+                            <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>{formatTime(conversation.lastTimestamp)}</span>
+                          </div>
+                          <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {conversation.lastMessage || 'Open chat'}
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
             </motion.div>
