@@ -50,6 +50,12 @@ export default function Dashboard({ user }) {
   const [presenceMap, setPresenceMap] = useState({});
   const [insightMessage, setInsightMessage] = useState('');
 
+  const proficiencyWeight = {
+    beginner: 1,
+    intermediate: 2,
+    advanced: 3,
+  };
+
   const getWantedSkillNames = (record = profile) =>
     (record?.skillsWanted || [])
       .map((skill) => (typeof skill === 'string' ? skill : skill?.name || ''))
@@ -68,6 +74,51 @@ export default function Dashboard({ user }) {
   };
 
   const isEligibleContact = (record) => getSharedWantedSkills(record).length > 0;
+
+  const getMatchScore = (record) => {
+    const wantedSkills = new Set(getWantedSkillNames());
+    const offeredSkills = record?.skillsOffered || [];
+
+    let matchedSkillCount = 0;
+    let proficiencyScore = 0;
+
+    offeredSkills.forEach((skill) => {
+      const skillName = (typeof skill === 'string' ? skill : skill?.name || '').trim().toLowerCase();
+      if (!wantedSkills.has(skillName)) {
+        return;
+      }
+
+      matchedSkillCount += 1;
+      const proficiency = (typeof skill === 'string' ? 'beginner' : skill?.proficiency || 'beginner').trim().toLowerCase();
+      proficiencyScore += proficiencyWeight[proficiency] || 1;
+    });
+
+    return {
+      matchedSkillCount,
+      proficiencyScore,
+      totalScore: matchedSkillCount * 100 + proficiencyScore * 10 + (record?.reputation || 0),
+    };
+  };
+
+  const sortContactsByRelevance = (records) =>
+    [...records].sort((left, right) => {
+      const leftScore = getMatchScore(left);
+      const rightScore = getMatchScore(right);
+
+      if (rightScore.matchedSkillCount !== leftScore.matchedSkillCount) {
+        return rightScore.matchedSkillCount - leftScore.matchedSkillCount;
+      }
+
+      if (rightScore.proficiencyScore !== leftScore.proficiencyScore) {
+        return rightScore.proficiencyScore - leftScore.proficiencyScore;
+      }
+
+      if ((right.reputation || 0) !== (left.reputation || 0)) {
+        return (right.reputation || 0) - (left.reputation || 0);
+      }
+
+      return (left.displayName || '').localeCompare(right.displayName || '');
+    });
 
   const getSkillPreview = (userRecord) => {
     const offered = userRecord?.skillsOffered?.slice(0, 2)?.map((skill) => skill.name || skill) || [];
@@ -133,7 +184,7 @@ export default function Dashboard({ user }) {
           .map(([uid, data]) => ({ uid, ...data }));
       }
 
-      setGlobalUsers(us);
+      setGlobalUsers(sortContactsByRelevance(us));
     } catch(err) {
       console.error(err);
       if (isDatabasePermissionError(err)) {
@@ -223,7 +274,7 @@ export default function Dashboard({ user }) {
           .map(([uid, data]) => ({ uid, ...data }));
       }
 
-      allOtherUsers = allOtherUsers.filter(isEligibleContact);
+      allOtherUsers = sortContactsByRelevance(allOtherUsers.filter(isEligibleContact));
 
       if(allOtherUsers.length === 0) {
         setMatches([]);
@@ -267,7 +318,7 @@ export default function Dashboard({ user }) {
           .map(([uid, data]) => ({ uid, ...data }));
       }
 
-      allOtherUsers = allOtherUsers.filter(isEligibleContact);
+      allOtherUsers = sortContactsByRelevance(allOtherUsers.filter(isEligibleContact));
 
       if(allOtherUsers.length < 2) {
         setAiTeam(null);
@@ -277,7 +328,7 @@ export default function Dashboard({ user }) {
       
       const teamMatch = await generateTeamBuilder(profile, allOtherUsers);
       const enrichedMembers = teamMatch.members.map(uid => allOtherUsers.find(ou => ou.uid === uid)).filter(Boolean);
-      const builtTeam = { ...teamMatch, membersData: enrichedMembers };
+      const builtTeam = { ...teamMatch, membersData: sortContactsByRelevance(enrichedMembers) };
       setAiTeam(builtTeam);
       setInsightMessage(enrichedMembers.length === 0 ? 'No triad members were available for the generated team.' : '');
       sessionStorage.setItem('savedAiTeam', JSON.stringify(builtTeam));
@@ -467,6 +518,9 @@ export default function Dashboard({ user }) {
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{getSkillPreview(person)}</div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--accent-secondary)', marginTop: '0.35rem' }}>
                         Matches: {getSharedWantedSkills(person).join(', ')}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                        Rank score: {getMatchScore(person).matchedSkillCount} skill match, proficiency {getMatchScore(person).proficiencyScore}
                       </div>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
