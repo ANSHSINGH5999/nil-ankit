@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { auth, db } from '../firebase';
+import { auth, db, firestorePermissionMessage, isFirestorePermissionError } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -60,7 +60,13 @@ export default function Dashboard({ user }) {
       const us = [];
       qs.forEach(d => { if (d.id !== user.uid && d.data().displayName) us.push({ uid: d.id, ...d.data() }); });
       setGlobalUsers(us);
-    } catch(err) { console.error(err); }
+    } catch(err) {
+      console.error(err);
+      if (isFirestorePermissionError(err)) {
+        setProfileWarning(firestorePermissionMessage);
+      }
+      setGlobalUsers([]);
+    }
   };
 
   const fetchProfile = async () => {
@@ -77,7 +83,11 @@ export default function Dashboard({ user }) {
     } catch (err) {
       console.error(err);
       setProfile(defaultProfile);
-      setProfileWarning('Signed in, but the app could not load your cloud profile. Check that Firestore is enabled for this Firebase project and that its rules allow this user.');
+      setProfileWarning(
+        isFirestorePermissionError(err)
+          ? firestorePermissionMessage
+          : 'Signed in, but the app could not load your cloud profile.'
+      );
     }
   };
 

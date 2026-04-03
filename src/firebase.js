@@ -21,3 +21,13 @@ export const analyticsPromise =
   typeof window === "undefined"
     ? Promise.resolve(null)
     : isSupported().then((supported) => (supported ? getAnalytics(app) : null));
+
+export function isFirestorePermissionError(error) {
+  return (
+    error?.code === 'permission-denied' ||
+    error?.message?.includes('Missing or insufficient permissions')
+  );
+}
+
+export const firestorePermissionMessage =
+  'Firestore access is blocked for this Firebase project. Create Firestore and update its rules to allow authenticated users to read and write their own app data.';

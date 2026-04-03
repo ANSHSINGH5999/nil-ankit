@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { db } from '../firebase';
+import { db, firestorePermissionMessage, isFirestorePermissionError } from '../firebase';
 import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
 import { Sparkles, ArrowLeft, Send } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -14,6 +14,8 @@ export default function Chat({ user }) {
   const [targetUser, setTargetUser] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
+  const [chatError, setChatError] = useState('');
+  const [chatDisabled, setChatDisabled] = useState(false);
   const messagesEndRef = useRef(null);
 
   const [userProfile, setUserProfile] = useState(null);
@@ -30,30 +32,80 @@ export default function Chat({ user }) {
     return [uid1, uid2].sort().join('_');
   };
 
+  const defaultProfile = {
+    displayName: user.displayName || user.email?.split('@')[0] || 'new user',
+    email: user.email || '',
+  };
+
   useEffect(() => {
     if (!targetUid) { navigate('/dashboard'); return; }
 
-    getDoc(doc(db, 'users', targetUid)).then(snap => {
-      if(snap.exists()) setTargetUser(snap.data());
-    });
-    
-    // Fetch my profile for API key
-    getDoc(doc(db, 'users', user.uid)).then(snap => {
-      if(snap.exists()) setUserProfile(snap.data());
-    });
+    let isMounted = true;
+
+    getDoc(doc(db, 'users', targetUid))
+      .then((snap) => {
+        if (!isMounted) return;
+        if (snap.exists()) {
+          setTargetUser(snap.data());
+        }
+      })
+      .catch((error) => {
+        console.error(error);
+        if (!isMounted) return;
+        setTargetUser({ displayName: 'Match' });
+        if (isFirestorePermissionError(error)) {
+          setChatError(firestorePermissionMessage);
+          setChatDisabled(true);
+        }
+      });
+
+    getDoc(doc(db, 'users', user.uid))
+      .then((snap) => {
+        if (!isMounted) return;
+        if (snap.exists()) {
+          setUserProfile(snap.data());
+          return;
+        }
+
+        setUserProfile(defaultProfile);
+      })
+      .catch((error) => {
+        console.error(error);
+        if (!isMounted) return;
+        setUserProfile(defaultProfile);
+        if (isFirestorePermissionError(error)) {
+          setChatError(firestorePermissionMessage);
+          setChatDisabled(true);
+        }
+      });
 
     const chatId = getChatId(user.uid, targetUid);
     const q = query(collection(db, `chats/${chatId}/messages`), orderBy('createdAt', 'asc'));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = [];
-      snapshot.forEach((doc) => {
-        msgs.push({ id: doc.id, ...doc.data() });
-      });
-      setMessages(msgs);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        if (!isMounted) return;
+        const msgs = [];
+        snapshot.forEach((doc) => {
+          msgs.push({ id: doc.id, ...doc.data() });
+        });
+        setMessages(msgs);
+      },
+      (error) => {
+        console.error(error);
+        if (!isMounted) return;
+        if (isFirestorePermissionError(error)) {
+          setChatError(firestorePermissionMessage);
+          setChatDisabled(true);
+        }
+      }
+    );
 
-    return () => unsubscribe();
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, [targetUid, user.uid, navigate]);
 
   useEffect(() => {
@@ -62,18 +114,30 @@ export default function Chat({ user }) {
 
   const sendMessage = async (e) => {
     e.preventDefault();
-    if (!newMessage.trim()) return;
+    if (!newMessage.trim() || chatDisabled) return;
     
     const chatId = getChatId(user.uid, targetUid);
     const messageText = newMessage;
     setNewMessage('');
     
     // 1. Send our message
-    await addDoc(collection(db, `chats/${chatId}/messages`), {
-      text: messageText,
-      senderId: user.uid,
-      createdAt: serverTimestamp() 
-    });
+    try {
+      await addDoc(collection(db, `chats/${chatId}/messages`), {
+        text: messageText,
+        senderId: user.uid,
+        createdAt: serverTimestamp() 
+      });
+    } catch (error) {
+      console.error(error);
+      if (isFirestorePermissionError(error)) {
+        setChatError(firestorePermissionMessage);
+        setChatDisabled(true);
+        setNewMessage(messageText);
+        return;
+      }
+
+      throw error;
+    }
     
     // 2. Trigger AI Reply instantly (for presentation purposes)
     if (targetUser) {
@@ -123,6 +187,12 @@ export default function Chat({ user }) {
         <div className="glass-panel animate-fade-rise-delay" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0', overflow: 'hidden' }}>
           
           <div style={{ flex: 1, padding: '2rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {chatError && (
+              <div style={{ color: '#fde68a', background: 'rgba(245, 158, 11, 0.14)', border: '1px solid rgba(245, 158, 11, 0.32)', padding: '1rem', borderRadius: '12px', fontSize: '0.9rem' }}>
+                {chatError}
+              </div>
+            )}
+
             {messages.length === 0 && (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '2rem' }}>
                 <Sparkles size={30} style={{ marginBottom: '1rem', opacity: 0.5 }} />
@@ -157,12 +227,13 @@ export default function Chat({ user }) {
           <form onSubmit={sendMessage} style={{ padding: '1.5rem', borderTop: '1px solid var(--border-color)', background: 'rgba(0,0,0,0.2)', display: 'flex', gap: '10px' }}>
             <input 
               type="text" 
-              placeholder="Start typing..." 
+              placeholder={chatDisabled ? 'Chat is unavailable until Firestore access is fixed.' : 'Start typing...'} 
               value={newMessage} 
               onChange={(e) => setNewMessage(e.target.value)} 
+              disabled={chatDisabled}
               style={{ flex: 1, background: 'rgba(255,255,255,0.05)', borderRadius: '9999px', padding: '14px 24px', fontSize: '1rem' }} 
             />
-            <button type="submit" className="liquid-glass" disabled={!newMessage.trim()} style={{ padding: '14px', borderRadius: '50%' }}>
+            <button type="submit" className="liquid-glass" disabled={chatDisabled || !newMessage.trim()} style={{ padding: '14px', borderRadius: '50%' }}>
               <Send size={18} />
             </button>
           </form>
