@@ -8,7 +8,7 @@ import {
   signInWithPopup,
   updateProfile,
 } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { get, ref, set } from 'firebase/database';
 import { Sparkles, UserPlus, LogIn } from 'lucide-react';
 
 function buildDefaultProfile(user, fallbackName = '') {
@@ -57,14 +57,14 @@ export default function Login() {
   };
 
   const ensureUserProfile = async (user, fallbackName = '') => {
-    const userRef = doc(db, 'users', user.uid);
-    const existingProfile = await getDoc(userRef);
+    const userRef = ref(db, `users/${user.uid}`);
+    const existingProfile = await get(userRef);
 
     if (existingProfile.exists()) {
       return;
     }
 
-    await setDoc(userRef, buildDefaultProfile(user, fallbackName), { merge: true });
+    await set(userRef, buildDefaultProfile(user, fallbackName));
   };
 
   const handleAuth = async (e) => {

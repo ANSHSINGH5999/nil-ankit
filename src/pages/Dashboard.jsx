@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { auth, db, firestorePermissionMessage, isFirestorePermissionError } from '../firebase';
+import { auth, db, databasePermissionMessage, isDatabasePermissionError } from '../firebase';
 import { signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
+import { get, ref, set, update } from 'firebase/database';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LogOut, BookOpen, Sparkles, User, Settings, GraduationCap, X, Plus, Trash2, Key, Users, Map, CheckCircle, Crosshair, Crown, Bell } from 'lucide-react';
 import { findBestMatches, generateRoadmap, generateQuiz, generateTeamBuilder, generateSkillGap } from '../ai';
@@ -56,14 +56,16 @@ export default function Dashboard({ user }) {
 
   const fetchGlobalUsers = async () => {
     try {
-      const qs = await getDocs(collection(db, 'users'));
-      const us = [];
-      qs.forEach(d => { if (d.id !== user.uid && d.data().displayName) us.push({ uid: d.id, ...d.data() }); });
+      const snapshot = await get(ref(db, 'users'));
+      const allUsers = snapshot.exists() ? snapshot.val() : {};
+      const us = Object.entries(allUsers)
+        .filter(([uid, data]) => uid !== user.uid && data?.displayName)
+        .map(([uid, data]) => ({ uid, ...data }));
       setGlobalUsers(us);
     } catch(err) {
       console.error(err);
-      if (isFirestorePermissionError(err)) {
-        setProfileWarning(firestorePermissionMessage);
+      if (isDatabasePermissionError(err)) {
+        setProfileWarning(databasePermissionMessage);
       }
       setGlobalUsers([]);
     }
@@ -72,20 +74,19 @@ export default function Dashboard({ user }) {
   const fetchProfile = async () => {
     const defaultProfile = { displayName: user.displayName || user.email.split('@')[0], email: user.email, skillsOffered: [], skillsWanted: [], reputation: 0 };
     try {
-      const docSnap = await getDoc(doc(db, 'users', user.uid));
-      if (docSnap.exists()) {
-        const d = docSnap.data();
-        setProfile(d);
+      const snapshot = await get(ref(db, `users/${user.uid}`));
+      if (snapshot.exists()) {
+        setProfile(snapshot.val());
       } else {
         setProfile(defaultProfile);
-        await setDoc(doc(db, 'users', user.uid), defaultProfile);
+        await set(ref(db, `users/${user.uid}`), defaultProfile);
       }
     } catch (err) {
       console.error(err);
       setProfile(defaultProfile);
       setProfileWarning(
-        isFirestorePermissionError(err)
-          ? firestorePermissionMessage
+        isDatabasePermissionError(err)
+          ? databasePermissionMessage
           : 'Signed in, but the app could not load your cloud profile.'
       );
     }
@@ -98,7 +99,7 @@ export default function Dashboard({ user }) {
       const p = profile || {};
       const currentSkills = p[editingType] || [];
       const updatedSkills = [...currentSkills, { name: newSkill.trim(), proficiency: newProficiency }];
-      await setDoc(doc(db, 'users', user.uid), { [editingType]: updatedSkills }, { merge: true });
+      await update(ref(db, `users/${user.uid}`), { [editingType]: updatedSkills });
       setProfile({ ...p, [editingType]: updatedSkills });
       setNewSkill(''); setNewProficiency('Beginner');
     } finally { setLoading(false); }
@@ -110,7 +111,7 @@ export default function Dashboard({ user }) {
       const p = profile || {};
       const currentSkills = [...(p[editingType] || [])];
       currentSkills.splice(index, 1);
-      await setDoc(doc(db, 'users', user.uid), { [editingType]: currentSkills }, { merge: true });
+      await update(ref(db, `users/${user.uid}`), { [editingType]: currentSkills });
       setProfile({ ...p, [editingType]: currentSkills });
     } finally { setLoading(false); }
   };
@@ -118,7 +119,7 @@ export default function Dashboard({ user }) {
   const saveApiKey = async () => {
     setLoading(true);
     try {
-      await setDoc(doc(db, 'users', user.uid), { geminiApiKey: apiKey }, { merge: true });
+      await update(ref(db, `users/${user.uid}`), { geminiApiKey: apiKey });
       setProfile({...profile, geminiApiKey: apiKey});
       setIsSettingsOpen(false);
     } finally { setLoading(false); }
@@ -129,9 +130,11 @@ export default function Dashboard({ user }) {
     // API check bypassed
     setIsMatching(true);
     try {
-      const querySnaps = await getDocs(collection(db, 'users'));
-      const allOtherUsers = [];
-      querySnaps.forEach((d) => { if (d.id !== user.uid && d.data().displayName) allOtherUsers.push({ uid: d.id, ...d.data() }); });
+      const snapshot = await get(ref(db, 'users'));
+      const allUsers = snapshot.exists() ? snapshot.val() : {};
+      const allOtherUsers = Object.entries(allUsers)
+        .filter(([uid, data]) => uid !== user.uid && data?.displayName)
+        .map(([uid, data]) => ({ uid, ...data }));
       if(allOtherUsers.length === 0) { alert("No other users found."); return setIsMatching(false); }
       
       const rawMatches = await findBestMatches(profile, allOtherUsers, profile.geminiApiKey);
@@ -148,9 +151,11 @@ export default function Dashboard({ user }) {
     // API check bypassed
     setIsBuildingTeam(true);
     try {
-      const querySnaps = await getDocs(collection(db, 'users'));
-      const allOtherUsers = [];
-      querySnaps.forEach((d) => { if (d.id !== user.uid && d.data().displayName) allOtherUsers.push({ uid: d.id, ...d.data() }); });
+      const snapshot = await get(ref(db, 'users'));
+      const allUsers = snapshot.exists() ? snapshot.val() : {};
+      const allOtherUsers = Object.entries(allUsers)
+        .filter(([uid, data]) => uid !== user.uid && data?.displayName)
+        .map(([uid, data]) => ({ uid, ...data }));
       if(allOtherUsers.length < 2) { alert("Not enough users for a team!"); return setIsBuildingTeam(false); }
       
       const teamMatch = await generateTeamBuilder(profile, allOtherUsers, profile.geminiApiKey);
@@ -191,7 +196,7 @@ export default function Dashboard({ user }) {
     setQuizScore(score);
     if(score === activeQuiz.data.length && profile) {
        const newRep = (profile.reputation || reputationScore) + 25;
-       await setDoc(doc(db, 'users', user.uid), { reputation: newRep }, { merge: true });
+       await update(ref(db, `users/${user.uid}`), { reputation: newRep });
        setProfile({...profile, reputation: newRep});
     }
   };

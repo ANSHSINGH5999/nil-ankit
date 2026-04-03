@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { db, firestorePermissionMessage, isFirestorePermissionError } from '../firebase';
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { db, databasePermissionMessage, isDatabasePermissionError } from '../firebase';
+import { get, onValue, push, ref, serverTimestamp, set } from 'firebase/database';
 import { Sparkles, ArrowLeft, Send } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { generateChatReply } from '../ai';
@@ -42,28 +42,28 @@ export default function Chat({ user }) {
 
     let isMounted = true;
 
-    getDoc(doc(db, 'users', targetUid))
+    get(ref(db, `users/${targetUid}`))
       .then((snap) => {
         if (!isMounted) return;
         if (snap.exists()) {
-          setTargetUser(snap.data());
+          setTargetUser(snap.val());
         }
       })
       .catch((error) => {
         console.error(error);
         if (!isMounted) return;
         setTargetUser({ displayName: 'Match' });
-        if (isFirestorePermissionError(error)) {
-          setChatError(firestorePermissionMessage);
+        if (isDatabasePermissionError(error)) {
+          setChatError(databasePermissionMessage);
           setChatDisabled(true);
         }
       });
 
-    getDoc(doc(db, 'users', user.uid))
+    get(ref(db, `users/${user.uid}`))
       .then((snap) => {
         if (!isMounted) return;
         if (snap.exists()) {
-          setUserProfile(snap.data());
+          setUserProfile(snap.val());
           return;
         }
 
@@ -73,30 +73,34 @@ export default function Chat({ user }) {
         console.error(error);
         if (!isMounted) return;
         setUserProfile(defaultProfile);
-        if (isFirestorePermissionError(error)) {
-          setChatError(firestorePermissionMessage);
+        if (isDatabasePermissionError(error)) {
+          setChatError(databasePermissionMessage);
           setChatDisabled(true);
         }
       });
 
     const chatId = getChatId(user.uid, targetUid);
-    const q = query(collection(db, `chats/${chatId}/messages`), orderBy('createdAt', 'asc'));
+    const messagesRef = ref(db, `chats/${chatId}/messages`);
 
-    const unsubscribe = onSnapshot(
-      q,
+    const unsubscribe = onValue(
+      messagesRef,
       (snapshot) => {
         if (!isMounted) return;
-        const msgs = [];
-        snapshot.forEach((doc) => {
-          msgs.push({ id: doc.id, ...doc.data() });
-        });
+        const value = snapshot.val() || {};
+        const msgs = Object.entries(value)
+          .map(([id, data]) => ({ id, ...data }))
+          .sort((a, b) => {
+            const aTime = typeof a.createdAt === 'number' ? a.createdAt : 0;
+            const bTime = typeof b.createdAt === 'number' ? b.createdAt : 0;
+            return aTime - bTime;
+          });
         setMessages(msgs);
       },
       (error) => {
         console.error(error);
         if (!isMounted) return;
-        if (isFirestorePermissionError(error)) {
-          setChatError(firestorePermissionMessage);
+        if (isDatabasePermissionError(error)) {
+          setChatError(databasePermissionMessage);
           setChatDisabled(true);
         }
       }
@@ -122,15 +126,15 @@ export default function Chat({ user }) {
     
     // 1. Send our message
     try {
-      await addDoc(collection(db, `chats/${chatId}/messages`), {
+      await set(push(ref(db, `chats/${chatId}/messages`)), {
         text: messageText,
         senderId: user.uid,
         createdAt: serverTimestamp() 
       });
     } catch (error) {
       console.error(error);
-      if (isFirestorePermissionError(error)) {
-        setChatError(firestorePermissionMessage);
+      if (isDatabasePermissionError(error)) {
+        setChatError(databasePermissionMessage);
         setChatDisabled(true);
         setNewMessage(messageText);
         return;
@@ -150,7 +154,7 @@ export default function Chat({ user }) {
         try {
             const aiResponse = await generateChatReply(targetUser, h, "MOCKED_KEY");
             if(aiResponse) {
-                await addDoc(collection(db, `chats/${chatId}/messages`), {
+                await set(push(ref(db, `chats/${chatId}/messages`)), {
                   text: aiResponse,
                   senderId: targetUid, // Spoofing the other user
                   createdAt: serverTimestamp() 
@@ -227,7 +231,7 @@ export default function Chat({ user }) {
           <form onSubmit={sendMessage} style={{ padding: '1.5rem', borderTop: '1px solid var(--border-color)', background: 'rgba(0,0,0,0.2)', display: 'flex', gap: '10px' }}>
             <input 
               type="text" 
-              placeholder={chatDisabled ? 'Chat is unavailable until Firestore access is fixed.' : 'Start typing...'} 
+              placeholder={chatDisabled ? 'Chat is unavailable until Realtime Database access is fixed.' : 'Start typing...'} 
               value={newMessage} 
               onChange={(e) => setNewMessage(e.target.value)} 
               disabled={chatDisabled}

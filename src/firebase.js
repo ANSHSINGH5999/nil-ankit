@@ -1,7 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getAnalytics, isSupported } from "firebase/analytics";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDRT9WyYk7WsGcOI6s-ROvHgUxv0yybC7E",
@@ -16,18 +16,20 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+export const db = getDatabase(app);
 export const analyticsPromise =
   typeof window === "undefined"
     ? Promise.resolve(null)
     : isSupported().then((supported) => (supported ? getAnalytics(app) : null));
 
-export function isFirestorePermissionError(error) {
+export function isDatabasePermissionError(error) {
   return (
+    error?.code === 'PERMISSION_DENIED' ||
     error?.code === 'permission-denied' ||
+    error?.message?.includes('Permission denied') ||
     error?.message?.includes('Missing or insufficient permissions')
   );
 }
 
-export const firestorePermissionMessage =
-  'Firestore access is blocked for this Firebase project. Create Firestore and update its rules to allow authenticated users to read and write their own app data.';
+export const databasePermissionMessage =
+  'Realtime Database access is blocked for this Firebase project. Enable Realtime Database rules that allow authenticated users to read and write their app data.';

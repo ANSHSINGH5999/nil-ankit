@@ -1,5 +1,5 @@
 import { db } from '../firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { ref, set } from 'firebase/database';
 
 export async function seedFakeUsers() {
   const fakeUsers = [
@@ -114,6 +114,6 @@ export async function seedFakeUsers() {
   ];
 
   for (let u of fakeUsers) {
-    await setDoc(doc(db, 'users', u.uid), u);
+    await set(ref(db, `users/${u.uid}`), u);
   }
 }
