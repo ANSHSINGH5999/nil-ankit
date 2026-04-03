@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom';
 export default function Dashboard({ user }) {
   const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
+  const [profileWarning, setProfileWarning] = useState('');
   
   // Modals
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -63,17 +64,21 @@ export default function Dashboard({ user }) {
   };
 
   const fetchProfile = async () => {
+    const defaultProfile = { displayName: user.displayName || user.email.split('@')[0], email: user.email, skillsOffered: [], skillsWanted: [], reputation: 0 };
     try {
       const docSnap = await getDoc(doc(db, 'users', user.uid));
       if (docSnap.exists()) {
         const d = docSnap.data();
         setProfile(d);
       } else {
-        const defaultProfile = { displayName: user.displayName || user.email.split('@')[0], email: user.email, skillsOffered: [], skillsWanted: [], reputation: 0 };
         setProfile(defaultProfile);
         await setDoc(doc(db, 'users', user.uid), defaultProfile);
       }
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      setProfile(defaultProfile);
+      setProfileWarning('Signed in, but the app could not load your cloud profile. Check that Firestore is enabled for this Firebase project and that its rules allow this user.');
+    }
   };
 
   const addSkill = async () => {
@@ -207,6 +212,12 @@ export default function Dashboard({ user }) {
           <button onClick={() => signOut(auth)} className="btn-secondary" style={{ padding: '10px 18px' }} title="Log out"><LogOut size={18} /></button>
         </div>
       </nav>
+
+      {profileWarning && (
+        <div className="glass-panel" style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem', borderColor: 'rgba(245, 158, 11, 0.35)', color: '#fde68a' }}>
+          {profileWarning}
+        </div>
+      )}
 
       <main style={{ maxWidth: '1280px', margin: '0 auto', display: 'grid', gridTemplateColumns: 'minmax(340px, 1fr) 2fr', gap: '2.5rem' }}>
         

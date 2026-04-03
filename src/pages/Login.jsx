@@ -1,9 +1,25 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { auth, db } from '../firebase';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup,
+  updateProfile,
+} from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { Sparkles, UserPlus, LogIn } from 'lucide-react';
+
+function buildDefaultProfile(user, fallbackName = '') {
+  return {
+    displayName: fallbackName || user.displayName || user.email?.split('@')[0] || 'User',
+    email: user.email || '',
+    skillsOffered: [],
+    skillsWanted: [],
+    createdAt: new Date().toISOString(),
+  };
+}
 
 export default function Login() {
   const [isSignApp, setIsSignUp] = useState(false);
@@ -13,12 +29,42 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const formatAuthError = (message) => {
-    if (message.includes('auth/unauthorized-domain')) {
+  const formatAuthError = (err) => {
+    const code = err?.code || '';
+    const message = err?.message || 'Login failed.';
+
+    if (code.includes('auth/unauthorized-domain')) {
       return 'Google sign-in is blocked for this domain. Open the app on http://localhost:3006 or add the current domain to Firebase Authentication > Settings > Authorized domains.';
     }
 
+    if (code.includes('auth/operation-not-allowed')) {
+      return 'This sign-in method is not enabled in Firebase Authentication. Enable Email/Password or Google in the Firebase console.';
+    }
+
+    if (code.includes('auth/invalid-credential') || code.includes('auth/invalid-login-credentials')) {
+      return 'Invalid email or password for this Firebase project.';
+    }
+
+    if (code.includes('auth/popup-closed-by-user')) {
+      return 'Google sign-in popup was closed before login finished.';
+    }
+
+    if (code.includes('auth/popup-blocked')) {
+      return 'Your browser blocked the Google sign-in popup. Allow popups for this site and try again.';
+    }
+
     return message.replace('Firebase: ', '');
+  };
+
+  const ensureUserProfile = async (user, fallbackName = '') => {
+    const userRef = doc(db, 'users', user.uid);
+    const existingProfile = await getDoc(userRef);
+
+    if (existingProfile.exists()) {
+      return;
+    }
+
+    await setDoc(userRef, buildDefaultProfile(user, fallbackName), { merge: true });
   };
 
   const handleAuth = async (e) => {
@@ -26,20 +72,26 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
+      const normalizedEmail = email.trim().toLowerCase();
+
       if (isSignApp) {
-        const cred = await createUserWithEmailAndPassword(auth, email, password);
-        await setDoc(doc(db, 'users', cred.user.uid), {
-          displayName: name || email.split('@')[0],
-          email: email,
-          skillsOffered: [],
-          skillsWanted: [],
-          createdAt: new Date().toISOString()
-        });
+        const trimmedName = name.trim();
+        const cred = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+
+        if (trimmedName) {
+          await updateProfile(cred.user, { displayName: trimmedName });
+        }
+
+        try {
+          await ensureUserProfile(cred.user, trimmedName);
+        } catch (profileError) {
+          console.error('Profile initialization failed after sign up:', profileError);
+        }
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        await signInWithEmailAndPassword(auth, normalizedEmail, password);
       }
     } catch (err) {
-      setError(formatAuthError(err.message));
+      setError(formatAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -51,19 +103,14 @@ export default function Login() {
     setError('');
     try {
       const cred = await signInWithPopup(auth, provider);
-      const userRef = doc(db, 'users', cred.user.uid);
-      const docSnap = await getDoc(userRef);
-      if (!docSnap.exists()) {
-        await setDoc(userRef, {
-          displayName: cred.user.displayName || cred.user.email.split('@')[0],
-          email: cred.user.email,
-          skillsOffered: [],
-          skillsWanted: [],
-          createdAt: new Date().toISOString()
-        });
+
+      try {
+        await ensureUserProfile(cred.user);
+      } catch (profileError) {
+        console.error('Profile initialization failed after Google sign in:', profileError);
       }
     } catch (err) {
-      setError(formatAuthError(err.message));
+      setError(formatAuthError(err));
     } finally {
       setLoading(false);
     }
