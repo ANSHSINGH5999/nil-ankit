@@ -1,0 +1,174 @@
+import { useState, useEffect, useRef } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { db } from '../firebase';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { Sparkles, ArrowLeft, Send } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { generateChatReply } from '../ai';
+
+export default function Chat({ user }) {
+  const [searchParams] = useSearchParams();
+  const targetUid = searchParams.get('uid');
+  const navigate = useNavigate();
+
+  const [targetUser, setTargetUser] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const messagesEndRef = useRef(null);
+
+  const [userProfile, setUserProfile] = useState(null);
+  const [hasSetIntro, setHasSetIntro] = useState(false);
+
+  useEffect(() => {
+    if (targetUser && userProfile && messages.length === 0 && !hasSetIntro) {
+      setNewMessage(`Hey ${targetUser.displayName}, I'm ${userProfile.displayName || 'a new user'}! I noticed our profiles matched and I'd love to exchange skills. Are you free to connect?`);
+      setHasSetIntro(true);
+    }
+  }, [targetUser, userProfile, messages.length, hasSetIntro]);
+
+  const getChatId = (uid1, uid2) => {
+    return [uid1, uid2].sort().join('_');
+  };
+
+  useEffect(() => {
+    if (!targetUid) { navigate('/dashboard'); return; }
+
+    getDoc(doc(db, 'users', targetUid)).then(snap => {
+      if(snap.exists()) setTargetUser(snap.data());
+    });
+    
+    // Fetch my profile for API key
+    getDoc(doc(db, 'users', user.uid)).then(snap => {
+      if(snap.exists()) setUserProfile(snap.data());
+    });
+
+    const chatId = getChatId(user.uid, targetUid);
+    const q = query(collection(db, `chats/${chatId}/messages`), orderBy('createdAt', 'asc'));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgs = [];
+      snapshot.forEach((doc) => {
+        msgs.push({ id: doc.id, ...doc.data() });
+      });
+      setMessages(msgs);
+    });
+
+    return () => unsubscribe();
+  }, [targetUid, user.uid, navigate]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    if (!newMessage.trim()) return;
+    
+    const chatId = getChatId(user.uid, targetUid);
+    const messageText = newMessage;
+    setNewMessage('');
+    
+    // 1. Send our message
+    await addDoc(collection(db, `chats/${chatId}/messages`), {
+      text: messageText,
+      senderId: user.uid,
+      createdAt: serverTimestamp() 
+    });
+    
+    // 2. Trigger AI Reply instantly (for presentation purposes)
+    if (targetUser) {
+        // Construct basic history
+        const h = [...messages.slice(-5), {senderId: user.uid, text: messageText}].map(m => ({
+           sender: m.senderId === user.uid ? 'User' : targetUser.displayName,
+           text: m.text
+        }));
+        
+        try {
+            const aiResponse = await generateChatReply(targetUser, h, "MOCKED_KEY");
+            if(aiResponse) {
+                await addDoc(collection(db, `chats/${chatId}/messages`), {
+                  text: aiResponse,
+                  senderId: targetUid, // Spoofing the other user
+                  createdAt: serverTimestamp() 
+                });
+            }
+        } catch(err) {
+            alert("AI Chat Reply Error: " + err.message);
+            console.error("AI reply failed: ", err);
+        }
+    }
+  };
+
+  if(!targetUser) return null;
+
+  return (
+    <div className="cinema-page" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, padding: '2rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      <div style={{ width: '100%', maxWidth: '800px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+        
+        {/* Header */}
+        <div className="glass-panel animate-fade-rise" style={{ padding: '1.5rem 2rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <button onClick={() => navigate('/dashboard')} style={{ background: 'transparent', color: 'var(--text-main)', display: 'flex' }}><ArrowLeft /></button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginLeft: '1rem' }}>
+            <div style={{ width: '45px', height: '45px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span className="cinema-title" style={{ fontSize: '1.2rem', color: 'var(--text-main)' }}>{targetUser.displayName?.charAt(0)}</span>
+            </div>
+            <div>
+              <h2 className="cinema-title" style={{ fontSize: '1.6rem', margin: '0 0 2px 0', color: 'white' }}>{targetUser.displayName}</h2>
+              <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>Connected via AI Synthesis</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Chat Area */}
+        <div className="glass-panel animate-fade-rise-delay" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0', overflow: 'hidden' }}>
+          
+          <div style={{ flex: 1, padding: '2rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {messages.length === 0 && (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '2rem' }}>
+                <Sparkles size={30} style={{ marginBottom: '1rem', opacity: 0.5 }} />
+                <p style={{ fontSize: '1.1rem', fontFamily: 'var(--font-display)' }}>This is the beginning of your conversation with {targetUser.displayName}.</p>
+                <p style={{ fontSize: '0.85rem' }}>Say hi and start exchanging skills!</p>
+              </div>
+            )}
+
+            {messages.map((msg, i) => {
+              const isMe = msg.senderId === user.uid;
+              return (
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={msg.id} style={{ alignSelf: isMe ? 'flex-end' : 'flex-start', maxWidth: '70%' }}>
+                  <div style={{ 
+                    padding: '12px 18px', 
+                    borderRadius: '16px', 
+                    borderBottomRightRadius: isMe ? '4px' : '16px',
+                    borderBottomLeftRadius: !isMe ? '4px' : '16px',
+                    background: isMe ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.03)',
+                    border: '1px solid var(--border-color)',
+                    color: 'white',
+                    fontSize: '0.95rem',
+                    lineHeight: '1.4'
+                  }}>
+                    {msg.text}
+                  </div>
+                </motion.div>
+              );
+            })}
+            <div ref={messagesEndRef} />
+          </div>
+
+          <form onSubmit={sendMessage} style={{ padding: '1.5rem', borderTop: '1px solid var(--border-color)', background: 'rgba(0,0,0,0.2)', display: 'flex', gap: '10px' }}>
+            <input 
+              type="text" 
+              placeholder="Start typing..." 
+              value={newMessage} 
+              onChange={(e) => setNewMessage(e.target.value)} 
+              style={{ flex: 1, background: 'rgba(255,255,255,0.05)', borderRadius: '9999px', padding: '14px 24px', fontSize: '1rem' }} 
+            />
+            <button type="submit" className="liquid-glass" disabled={!newMessage.trim()} style={{ padding: '14px', borderRadius: '50%' }}>
+              <Send size={18} />
+            </button>
+          </form>
+
+        </div>
+      </div>
+    </div>
+  )
+}
