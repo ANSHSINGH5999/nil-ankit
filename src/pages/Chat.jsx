@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { db, databasePermissionMessage, isDatabasePermissionError } from '../firebase';
-import { get, increment, onValue, push, ref, serverTimestamp, set, update } from 'firebase/database';
+import { get, increment, onDisconnect, onValue, push, ref, remove, serverTimestamp, set, update } from 'firebase/database';
 import { Sparkles, ArrowLeft, Send } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { generateChatReply } from '../ai';
@@ -16,6 +16,8 @@ export default function Chat({ user }) {
   const [newMessage, setNewMessage] = useState('');
   const [chatError, setChatError] = useState('');
   const [chatDisabled, setChatDisabled] = useState(false);
+  const [targetPresence, setTargetPresence] = useState(null);
+  const [targetTyping, setTargetTyping] = useState(false);
   const messagesEndRef = useRef(null);
 
   const [userProfile, setUserProfile] = useState(null);
@@ -162,6 +164,54 @@ export default function Chat({ user }) {
   }, [targetUid, user.uid, navigate]);
 
   useEffect(() => {
+    if (!targetUid) {
+      return undefined;
+    }
+
+    const presenceRef = ref(db, `presence/${targetUid}`);
+    const unsubscribe = onValue(presenceRef, (snapshot) => {
+      setTargetPresence(snapshot.val());
+    });
+
+    return () => unsubscribe();
+  }, [targetUid]);
+
+  useEffect(() => {
+    if (!targetUid) {
+      return undefined;
+    }
+
+    const chatId = getChatId(user.uid, targetUid);
+    const typingRef = ref(db, `typing/${chatId}/${targetUid}`);
+    const unsubscribe = onValue(typingRef, (snapshot) => {
+      setTargetTyping(Boolean(snapshot.val()));
+    });
+
+    return () => unsubscribe();
+  }, [targetUid, user.uid]);
+
+  useEffect(() => {
+    if (!targetUid || chatDisabled) {
+      return undefined;
+    }
+
+    const chatId = getChatId(user.uid, targetUid);
+    const myTypingRef = ref(db, `typing/${chatId}/${user.uid}`);
+    const isTyping = newMessage.trim().length > 0;
+
+    if (isTyping) {
+      set(myTypingRef, true).catch((error) => console.error('Failed to set typing status:', error));
+      onDisconnect(myTypingRef).remove().catch((error) => console.error('Failed to clear typing status on disconnect:', error));
+    } else {
+      remove(myTypingRef).catch((error) => console.error('Failed to clear typing status:', error));
+    }
+
+    return () => {
+      remove(myTypingRef).catch((error) => console.error('Failed to clear typing status on cleanup:', error));
+    };
+  }, [newMessage, targetUid, user.uid, chatDisabled]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -172,6 +222,7 @@ export default function Chat({ user }) {
     const chatId = getChatId(user.uid, targetUid);
     const messageText = newMessage;
     setNewMessage('');
+    remove(ref(db, `typing/${chatId}/${user.uid}`)).catch((error) => console.error('Failed to clear typing status after send:', error));
     
     // 1. Send our message
     try {
@@ -250,7 +301,11 @@ export default function Chat({ user }) {
             <div>
               <h2 className="cinema-title" style={{ fontSize: '1.6rem', margin: '0 0 2px 0', color: 'white' }}>{targetUser.displayName}</h2>
               <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>
-                {isDemoTarget ? 'Demo profile with instant AI replies' : 'Realtime direct messaging'}
+                {isDemoTarget
+                  ? 'Demo profile with instant AI replies'
+                  : targetPresence?.state === 'online'
+                    ? 'Online now'
+                    : 'Realtime direct messaging'}
               </span>
             </div>
           </div>
@@ -273,6 +328,14 @@ export default function Chat({ user }) {
                 <p style={{ fontSize: '0.85rem' }}>
                   {isDemoTarget ? 'Send a message to see the demo user reply instantly.' : 'Messages update in realtime for both users.'}
                 </p>
+              </div>
+            )}
+
+            {targetTyping && !isDemoTarget && (
+              <div style={{ alignSelf: 'flex-start', maxWidth: '70%' }}>
+                <div style={{ padding: '10px 14px', borderRadius: '16px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  {targetUser.displayName} is typing...
+                </div>
               </div>
             )}
 

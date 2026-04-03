@@ -1,7 +1,8 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { auth } from './firebase';
+import { auth, db } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
+import { onDisconnect, ref, serverTimestamp, set, update } from 'firebase/database';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -19,6 +20,32 @@ function App() {
     });
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      return undefined;
+    }
+
+    const presenceRef = ref(db, `presence/${user.uid}`);
+    const onlineState = {
+      state: 'online',
+      lastChanged: Date.now(),
+    };
+    const offlineState = {
+      state: 'offline',
+      lastChanged: Date.now(),
+    };
+
+    set(presenceRef, onlineState).catch((error) => console.error('Failed to set presence:', error));
+    onDisconnect(presenceRef).set(offlineState).catch((error) => console.error('Failed to register disconnect presence:', error));
+
+    return () => {
+      update(ref(db), {
+        [`presence/${user.uid}/state`]: 'offline',
+        [`presence/${user.uid}/lastChanged`]: Date.now(),
+      }).catch((error) => console.error('Failed to clear presence:', error));
+    };
+  }, [user]);
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>

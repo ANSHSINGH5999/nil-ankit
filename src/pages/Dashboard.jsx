@@ -47,6 +47,7 @@ export default function Dashboard({ user }) {
   const [isDirectoryOpen, setIsDirectoryOpen] = useState(false);
   const [globalUsers, setGlobalUsers] = useState([]);
   const [conversations, setConversations] = useState([]);
+  const [presenceMap, setPresenceMap] = useState({});
   const [insightMessage, setInsightMessage] = useState('');
 
   const getSkillPreview = (userRecord) => {
@@ -80,6 +81,21 @@ export default function Dashboard({ user }) {
 
     return () => unsubscribe();
   }, [user.uid]);
+
+  useEffect(() => {
+    const presenceRef = ref(db, 'presence');
+    const unsubscribe = onValue(
+      presenceRef,
+      (snapshot) => {
+        setPresenceMap(snapshot.val() || {});
+      },
+      (error) => {
+        console.error(error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   const fetchGlobalUsers = async () => {
     try {
@@ -411,7 +427,7 @@ export default function Dashboard({ user }) {
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
                       <span style={{ fontSize: '0.72rem', padding: '4px 8px', borderRadius: '999px', background: person.isFake ? 'rgba(245, 158, 11, 0.15)' : 'rgba(34, 197, 94, 0.14)', color: person.isFake ? '#fcd34d' : '#bbf7d0', border: '1px solid rgba(255,255,255,0.08)' }}>
-                        {person.isFake ? 'Demo user' : 'Live user'}
+                        {person.isFake ? 'Demo user' : presenceMap?.[person.uid]?.state === 'online' ? 'Online' : 'Live user'}
                       </span>
                       <button className="liquid-glass" style={{ padding: '8px 14px', fontSize: '0.8rem' }} onClick={() => navigate('/chat?uid=' + person.uid)}>
                         Message
@@ -462,6 +478,11 @@ export default function Dashboard({ user }) {
                         {conversation.otherUserIsDemo && (
                           <span style={{ fontSize: '0.7rem', padding: '3px 8px', borderRadius: '999px', background: 'rgba(245, 158, 11, 0.15)', color: '#fcd34d' }}>
                             Demo
+                          </span>
+                        )}
+                        {!conversation.otherUserIsDemo && presenceMap?.[conversation.otherUserId]?.state === 'online' && (
+                          <span style={{ fontSize: '0.7rem', padding: '3px 8px', borderRadius: '999px', background: 'rgba(34, 197, 94, 0.14)', color: '#bbf7d0' }}>
+                            Online
                           </span>
                         )}
                       </div>
