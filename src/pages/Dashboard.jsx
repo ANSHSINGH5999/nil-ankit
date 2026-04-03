@@ -46,6 +46,7 @@ export default function Dashboard({ user }) {
   const [isBuildingTeam, setIsBuildingTeam] = useState(false);
   const [isDirectoryOpen, setIsDirectoryOpen] = useState(false);
   const [globalUsers, setGlobalUsers] = useState([]);
+  const [insightMessage, setInsightMessage] = useState('');
 
   const reputationScore = profile?.reputation || 0; 
 
@@ -58,9 +59,19 @@ export default function Dashboard({ user }) {
     try {
       const snapshot = await get(ref(db, 'users'));
       const allUsers = snapshot.exists() ? snapshot.val() : {};
-      const us = Object.entries(allUsers)
+      let us = Object.entries(allUsers)
         .filter(([uid, data]) => uid !== user.uid && data?.displayName)
         .map(([uid, data]) => ({ uid, ...data }));
+
+      if (us.length === 0) {
+        await seedFakeUsers();
+        const seededSnapshot = await get(ref(db, 'users'));
+        const seededUsers = seededSnapshot.exists() ? seededSnapshot.val() : {};
+        us = Object.entries(seededUsers)
+          .filter(([uid, data]) => uid !== user.uid && data?.displayName)
+          .map(([uid, data]) => ({ uid, ...data }));
+      }
+
       setGlobalUsers(us);
     } catch(err) {
       console.error(err);
@@ -127,41 +138,69 @@ export default function Dashboard({ user }) {
 
   // AI Executors
   const handleAIAnalysis = async () => {
-    // API check bypassed
+    setInsightMessage('');
     setIsMatching(true);
     try {
       const snapshot = await get(ref(db, 'users'));
       const allUsers = snapshot.exists() ? snapshot.val() : {};
-      const allOtherUsers = Object.entries(allUsers)
+      let allOtherUsers = Object.entries(allUsers)
         .filter(([uid, data]) => uid !== user.uid && data?.displayName)
         .map(([uid, data]) => ({ uid, ...data }));
-      if(allOtherUsers.length === 0) { alert("No other users found."); return setIsMatching(false); }
+
+      if (allOtherUsers.length === 0) {
+        await seedFakeUsers();
+        const seededSnapshot = await get(ref(db, 'users'));
+        const seededUsers = seededSnapshot.exists() ? seededSnapshot.val() : {};
+        allOtherUsers = Object.entries(seededUsers)
+          .filter(([uid, data]) => uid !== user.uid && data?.displayName)
+          .map(([uid, data]) => ({ uid, ...data }));
+      }
+
+      if(allOtherUsers.length === 0) {
+        setInsightMessage('No student profiles are available yet. Add more users or seed demo users first.');
+        return;
+      }
       
-      const rawMatches = await findBestMatches(profile, allOtherUsers, profile.geminiApiKey);
+      const rawMatches = await findBestMatches(profile, allOtherUsers);
       const enriched = rawMatches.map(m => {
         const fullUser = allOtherUsers.find(ou => ou.uid === m.uid);
         return { ...m, ...fullUser };
       }).filter(m => m.displayName);
       setMatches(enriched);
+      setInsightMessage(enriched.length === 0 ? 'No strong single-match results were generated.' : '');
       sessionStorage.setItem('savedMatches', JSON.stringify(enriched));
     } catch (err) { alert("AI mapping failed: " + err.message); console.error(err); } finally { setIsMatching(false); }
   };
 
   const handleTeamBuilder = async () => {
-    // API check bypassed
+    setInsightMessage('');
     setIsBuildingTeam(true);
     try {
       const snapshot = await get(ref(db, 'users'));
       const allUsers = snapshot.exists() ? snapshot.val() : {};
-      const allOtherUsers = Object.entries(allUsers)
+      let allOtherUsers = Object.entries(allUsers)
         .filter(([uid, data]) => uid !== user.uid && data?.displayName)
         .map(([uid, data]) => ({ uid, ...data }));
-      if(allOtherUsers.length < 2) { alert("Not enough users for a team!"); return setIsBuildingTeam(false); }
+
+      if (allOtherUsers.length < 2) {
+        await seedFakeUsers();
+        const seededSnapshot = await get(ref(db, 'users'));
+        const seededUsers = seededSnapshot.exists() ? seededSnapshot.val() : {};
+        allOtherUsers = Object.entries(seededUsers)
+          .filter(([uid, data]) => uid !== user.uid && data?.displayName)
+          .map(([uid, data]) => ({ uid, ...data }));
+      }
+
+      if(allOtherUsers.length < 2) {
+        setInsightMessage('At least two other student profiles are needed to assemble a triad.');
+        return;
+      }
       
-      const teamMatch = await generateTeamBuilder(profile, allOtherUsers, profile.geminiApiKey);
+      const teamMatch = await generateTeamBuilder(profile, allOtherUsers);
       const enrichedMembers = teamMatch.members.map(uid => allOtherUsers.find(ou => ou.uid === uid)).filter(Boolean);
       const builtTeam = { ...teamMatch, membersData: enrichedMembers };
       setAiTeam(builtTeam);
+      setInsightMessage(enrichedMembers.length === 0 ? 'No triad members were available for the generated team.' : '');
       sessionStorage.setItem('savedAiTeam', JSON.stringify(builtTeam));
     } catch (err) { alert("Team builder failed: " + err.message); console.error(err); } finally { setIsBuildingTeam(false); }
   };
@@ -173,19 +212,17 @@ export default function Dashboard({ user }) {
   };
 
   const compileRoadmap = async (skill) => {
-    if (!profile?.geminiApiKey) return setIsSettingsOpen(true);
     setIsRoadmapLoading(true);
     try {
-      const roadmap = await generateRoadmap(skill.name || skill, profile.geminiApiKey);
+      const roadmap = await generateRoadmap(skill.name || skill);
       setActiveRoadmap({ skill: skill.name || skill, data: roadmap });
     } catch(err) { alert("Error generating roadmap"); } finally { setIsRoadmapLoading(false); }
   };
 
   const startQuiz = async (skill) => {
-    if (!profile?.geminiApiKey) return setIsSettingsOpen(true);
     setIsQuizLoading(true); setQuizScore(null); setSelectedAnswers({});
     try {
-      const quiz = await generateQuiz(skill.name || skill, skill.proficiency || 'General', profile.geminiApiKey);
+      const quiz = await generateQuiz(skill.name || skill, skill.proficiency || 'General');
       setActiveQuiz({ skill: skill.name || skill, data: quiz });
     } catch(err) { alert("Error generating quiz"); } finally { setIsQuizLoading(false); }
   };
@@ -203,11 +240,10 @@ export default function Dashboard({ user }) {
 
   const handleGapAnalysis = async (e) => {
     e.preventDefault();
-    if (!profile?.geminiApiKey) return setIsSettingsOpen(true);
     if (!careerGoal.trim()) return;
     setIsAnalyzingGap(true);
     try {
-      const result = await generateSkillGap(profile, careerGoal, profile.geminiApiKey);
+      const result = await generateSkillGap(profile, careerGoal);
       setGapAnalysis(result);
     } catch(err) { alert("Error analyzing career gap."); } finally { setIsAnalyzingGap(false); }
   };
@@ -355,6 +391,16 @@ export default function Dashboard({ user }) {
               {/* Show spinners */}
               {isMatching && <div style={{textAlign: 'center', padding: '1rem', color: 'var(--text-muted)'}}>Finding Singles matches...</div>}
               {isBuildingTeam && <div style={{textAlign: 'center', padding: '1rem', color: 'var(--text-muted)'}}>Architecting Triad team...</div>}
+              {!isMatching && !isBuildingTeam && insightMessage && (
+                <div style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                  {insightMessage}
+                </div>
+              )}
+              {!isMatching && !isBuildingTeam && !aiTeam && matches.length === 0 && !insightMessage && (
+                <div style={{ padding: '2rem', borderRadius: '16px', border: '1px dashed var(--border-color)', color: 'var(--text-muted)', textAlign: 'center' }}>
+                  Run a scan to generate match suggestions and triad recommendations from the student ecosystem.
+                </div>
+              )}
 
               {/* Show AI Team if generated */}
               {aiTeam && !isBuildingTeam && (
@@ -365,7 +411,7 @@ export default function Dashboard({ user }) {
                    </div>
                    <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', marginBottom: '1.5rem' }}>{aiTeam.synergyReasoning}</p>
                    <div style={{ display: 'flex', gap: '1rem' }}>
-                     {aiTeam.membersData.map(member => (
+                     {aiTeam.membersData.map((member, memberIndex) => (
                        <div key={member.uid} style={{ flex: 1, padding: '1rem', background: 'rgba(0,0,0,0.3)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
                          <span className="cinema-title" style={{ fontSize: '1.2rem', display: 'block', marginBottom: '0.3rem' }}>{member.displayName}</span>
                          <div style={{ marginBottom: '0.8rem' }}>
@@ -373,7 +419,7 @@ export default function Dashboard({ user }) {
                          </div>
                          <div style={{ display: 'flex', gap: '8px' }}>
                            <button className="liquid-glass" style={{ flex: 1, fontSize: '0.75rem', padding: '6px' }} onClick={() => navigate('/chat?uid=' + member.uid)}>Internal Message</button>
-                           <button className="btn-secondary" style={{ padding: '6px 12px' }} onClick={() => { const nums = ["916303171521", "919030695136", "918106649793"]; const target = nums[idx % 3]; window.open(`https://wa.me/${target}`, '_blank'); }} title="Chat on WhatsApp">💬</button>
+                           <button className="btn-secondary" style={{ padding: '6px 12px' }} onClick={() => { const nums = ["916303171521", "919030695136", "918106649793"]; const target = nums[memberIndex % 3]; window.open(`https://wa.me/${target}`, '_blank'); }} title="Chat on WhatsApp">💬</button>
                          </div>
                        </div>
                      ))}
